@@ -1041,7 +1041,7 @@ class TrellisVGGTTo3DPipeline(TrellisImageTo3DPipeline):
         new_pipeline.__dict__ = pipeline.__dict__
         args = pipeline._pretrained_args
         new_pipeline.VGGT_dtype = torch.float32
-        VGGT_model = VGGT.from_pretrained("esther11/vggt-object-v0-1")
+        VGGT_model = VGGT.from_pretrained("Stable-X/vggt-object-v0-1")
         new_pipeline.VGGT_model = VGGT_model.to(new_pipeline.device)
         del new_pipeline.VGGT_model.depth_head
         del new_pipeline.VGGT_model.track_head

@@ -1,6 +1,5 @@
 --extra-index-url https://download.pytorch.org/whl/cu121
 
-kornia==0.8.0
 timm==0.6.7
 
 torch==2.4.0

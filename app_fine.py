@@ -556,7 +556,7 @@ def generate_and_extract_glb(
             target_extrinsics = torch.cat(target_extrinsics, dim=0)
             target_intrinsics = torch.cat(target_intrinsics, dim=0)
             
-            target_fitnesses_filtered = [x for x in target_fitnesses if x < 1]
+            target_fitnesses_filtered = [x for x in target_fitnesses if x <= 1]
             idx = target_fitnesses.index(max(target_fitnesses_filtered))
             target_transform = target_transforms[idx]
             down_pcd_align = copy.deepcopy(down_pcd).transform(target_transform)
@@ -833,7 +833,7 @@ with demo:
 
 # Launch the Gradio app
 if __name__ == "__main__":
-    pipeline = TrellisVGGTTo3DPipeline.from_pretrained("esther11/trellis-vggt-v0-2")
+    pipeline = TrellisVGGTTo3DPipeline.from_pretrained("Stable-X/trellis-vggt-v0-2")
     pipeline.cuda()
     pipeline.VGGT_model.cuda()
     pipeline.birefnet_model.cuda()
