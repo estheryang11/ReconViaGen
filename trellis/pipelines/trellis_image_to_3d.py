@@ -936,13 +936,16 @@ class TrellisVGGTTo3DPipeline(TrellisImageTo3DPipeline):
     ):
 
         torch.manual_seed(seed)
-        aggregated_tokens_list, _ = self.vggt_feat(image)
+        with torch.no_grad():
+            with torch.cuda.amp.autocast(dtype=self.VGGT_dtype):
+                aggregated_tokens_list, _ = self.vggt_feat(image)
         b, n, _, _ = aggregated_tokens_list[0].shape
         image_cond = self.encode_image(image).reshape(b, n, -1, 1024)
         
         # if coords is None:
         ss_flow_model = self.models['sparse_structure_flow_model']
-        ss_cond = self.get_ss_cond(image_cond[:, :, 5:], aggregated_tokens_list, num_samples)
+        with torch.no_grad():
+            ss_cond = self.get_ss_cond(image_cond[:, :, 5:], aggregated_tokens_list, num_samples)
         # Sample structured latent
         ss_sampler_params = {**self.sparse_structure_sampler_params, **sparse_structure_sampler_params}
         reso = ss_flow_model.resolution
@@ -965,8 +968,8 @@ class TrellisVGGTTo3DPipeline(TrellisImageTo3DPipeline):
         # slat_steps = {**self.slat_sampler_params, **slat_sampler_params}.get('steps')
         # with self.inject_sampler_multi_image('slat_sampler', len(image), slat_steps, mode=mode):
         #     slat = self.sample_slat(cond, coords, slat_sampler_params)
-
-        slat_cond = self.get_slat_cond(image_cond, aggregated_tokens_list, num_samples)
+        with torch.no_grad():
+            slat_cond = self.get_slat_cond(image_cond, aggregated_tokens_list, num_samples)
         slat = self.sample_slat(slat_cond, coords, slat_sampler_params)
         return self.decode_slat(slat, formats), coords, ss_noise
 
@@ -992,12 +995,15 @@ class TrellisVGGTTo3DPipeline(TrellisImageTo3DPipeline):
     ):
 
         torch.manual_seed(seed)
-        aggregated_tokens_list, input_images = self.vggt_feat(image)
+        with torch.no_grad():
+            with torch.cuda.amp.autocast(dtype=self.VGGT_dtype):
+                aggregated_tokens_list, input_images = self.vggt_feat(image)
         b, n, _, _ = aggregated_tokens_list[0].shape
         image_cond = self.encode_image(image).reshape(b, n, -1, 1024)
         
         if coords is None:
-            ss_cond = self.get_ss_cond(image_cond[:, :, 5:], aggregated_tokens_list, num_samples)
+            with torch.no_grad():
+                ss_cond = self.get_ss_cond(image_cond[:, :, 5:], aggregated_tokens_list, num_samples)
             ss = torch.zeros(64, 64, 64, dtype=torch.long, device=image_cond.device)
             ss = ss.index_put_((input_points[:,0], input_points[:,1], input_points[:,2]), torch.tensor(1, dtype=ss.dtype, device=ss.device))
             ss = ss[None, None]
@@ -1023,8 +1029,8 @@ class TrellisVGGTTo3DPipeline(TrellisImageTo3DPipeline):
         # with self.inject_sampler_multi_image('slat_sampler', len(image), slat_steps, mode=mode):
         #     # slat = self.sample_slat(cond, coords, slat_sampler_params)
         #     slat = self.sample_slat_opt(apperance_learning_rate, apperance_start_t, input_images, extrinsics, intrinsics, cond, coords, slat_sampler_params)
-        
-        slat_cond = self.get_slat_cond(image_cond, aggregated_tokens_list, num_samples)
+        with torch.no_grad():
+            slat_cond = self.get_slat_cond(image_cond, aggregated_tokens_list, num_samples)
         slat = self.sample_slat_opt(apperance_learning_rate, apperance_start_t, input_images, extrinsics, intrinsics, slat_cond, coords, slat_sampler_params)
         return self.decode_slat(slat, formats)
 
@@ -1040,7 +1046,7 @@ class TrellisVGGTTo3DPipeline(TrellisImageTo3DPipeline):
         new_pipeline = TrellisVGGTTo3DPipeline()
         new_pipeline.__dict__ = pipeline.__dict__
         args = pipeline._pretrained_args
-        new_pipeline.VGGT_dtype = torch.float32
+        new_pipeline.VGGT_dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
         VGGT_model = VGGT.from_pretrained("Stable-X/vggt-object-v0-1")
         new_pipeline.VGGT_model = VGGT_model.to(new_pipeline.device)
         del new_pipeline.VGGT_model.depth_head

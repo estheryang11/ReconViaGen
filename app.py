@@ -3,6 +3,7 @@ from gradio_litmodel3d import LitModel3D
 
 import os
 import shutil
+import uuid
 os.environ['SPCONV_ALGO'] = 'native'
 from typing import *
 import torch
@@ -208,27 +209,34 @@ def generate_and_extract_glb(
     # os.makedirs(f"{TMP_DIR}/{output_id}", exist_ok=True)
     # video_path = f"{TMP_DIR}/{output_id}/preview.mp4"
     # glb_path = f"{TMP_DIR}/{output_id}/mesh.glb"
-
-    video = render_utils.render_video(outputs['gaussian'][0], num_frames=120)['color']
-    video_geo = render_utils.render_video(outputs['mesh'][0], num_frames=120)['normal']
-    video = [np.concatenate([video[i], video_geo[i]], axis=1) for i in range(len(video))]
-    video_path = os.path.join(user_dir, 'sample.mp4')
-    imageio.mimsave(video_path, video, fps=15)
     
+    video_color = render_utils.render_video(outputs['gaussian'][0], num_frames=120)['color']
+    video_geo = render_utils.render_video(outputs['mesh'][0], num_frames=120)['normal']
+    video = [np.concatenate([video_color[i], video_geo[i]], axis=1) for i in range(len(video_color))]
+    del video_color, video_geo
+    output_id = str(uuid.uuid4())
+    video_path = os.path.join(user_dir, f'{output_id}.mp4')
+    imageio.mimsave(video_path, video, fps=15)
+    del video
+
     # Extract GLB
     gs = outputs['gaussian'][0]
     mesh = outputs['mesh'][0]
+    torch.cuda.empty_cache()
     glb = postprocessing_utils.to_glb(gs, mesh, simplify=mesh_simplify, texture_size=texture_size, verbose=False)
-    glb_path = os.path.join(user_dir, 'sample.glb')
+    glb_path = os.path.join(user_dir, f'{output_id}.glb')
     glb.export(glb_path)
-    
+    del glb
+
     # Pack state for optional Gaussian extraction
     state = pack_state(gs, mesh)
-    
+    del outputs
+
     torch.cuda.empty_cache()
     return state, video_path, glb_path, glb_path
 
 
+@torch.inference_mode()
 def extract_gaussian(state: dict, req: gr.Request) -> Tuple[str, str]:
     """
     Extract a Gaussian splatting file from the generated 3D model.
@@ -246,7 +254,7 @@ def extract_gaussian(state: dict, req: gr.Request) -> Tuple[str, str]:
     """
     user_dir = os.path.join(TMP_DIR, str(req.session_hash))
     gs, _ = unpack_state(state)
-    gaussian_path = os.path.join(user_dir, 'sample.ply')
+    gaussian_path = os.path.join(user_dir, f'{uuid.uuid4()}.ply')
     gs.save_ply(gaussian_path)
     torch.cuda.empty_cache()
     return gaussian_path, gaussian_path
@@ -317,10 +325,10 @@ with demo:
         <img src="https://www.obukhov.ai/img/badges/badge-pdf.svg">
     </a>
     </p>
-    
+
     ✨This demo is partial. We will release the whole model later. Stay tuned!✨
     """)
-    
+
     with gr.Row():
         with gr.Column():
             with gr.Tabs() as input_tabs:
@@ -331,7 +339,7 @@ with demo:
                     gr.Markdown("""
                         Input different views of the object in separate images.
                                 """)
-        
+
             with gr.Accordion(label="Generation Settings", open=False):
                 seed = gr.Slider(0, MAX_SEED, label="Seed", value=0, step=1)
                 randomize_seed = gr.Checkbox(label="Randomize Seed", value=False)
@@ -344,7 +352,7 @@ with demo:
                     slat_guidance_strength = gr.Slider(0.0, 10.0, label="Guidance Strength", value=3.0, step=0.1)
                     slat_sampling_steps = gr.Slider(1, 50, label="Sampling Steps", value=12, step=1)
                 multiimage_algo = gr.Radio(["stochastic", "multidiffusion"], label="Multi-image Algorithm", value="multidiffusion")
-            
+
             with gr.Accordion(label="GLB Extraction Settings", open=False):
                 mesh_simplify = gr.Slider(0.9, 0.98, label="Simplify", value=0.95, step=0.01)
                 texture_size = gr.Slider(512, 2048, label="Texture Size", value=1024, step=512)
@@ -358,11 +366,11 @@ with demo:
         with gr.Column():
             video_output = gr.Video(label="Generated 3D Asset", autoplay=True, loop=True, height=300)
             model_output = LitModel3D(label="Extracted GLB/Gaussian", exposure=10.0, height=300)
-            
+
             with gr.Row():
                 download_glb = gr.DownloadButton(label="Download GLB", interactive=False)
-                download_gs = gr.DownloadButton(label="Download Gaussian", interactive=False)  
-    
+                download_gs = gr.DownloadButton(label="Download Gaussian", interactive=False)
+
     output_buf = gr.State()
 
     # Example images at the bottom of the page
@@ -404,33 +412,33 @@ with demo:
         inputs=[multiimage_prompt, seed, ss_guidance_strength, ss_sampling_steps, slat_guidance_strength, slat_sampling_steps, multiimage_algo, mesh_simplify, texture_size],
         outputs=[output_buf, video_output, model_output, download_glb],
     ).then(
-        lambda: tuple([gr.Button(interactive=True), gr.Button(interactive=True)]),
+        lambda: (gr.update(interactive=True), gr.update(interactive=True)),
         outputs=[extract_gs_btn, download_glb],
     )
 
     video_output.clear(
-        lambda: tuple([gr.Button(interactive=False), gr.Button(interactive=False), gr.Button(interactive=False)]),
+        lambda: (gr.update(interactive=False), gr.update(interactive=False), gr.update(interactive=False)),
         outputs=[extract_gs_btn, download_glb, download_gs],
     )
-    
+
     extract_gs_btn.click(
         extract_gaussian,
         inputs=[output_buf],
         outputs=[model_output, download_gs],
     ).then(
-        lambda: gr.Button(interactive=True),
+        lambda: gr.update(interactive=True),
         outputs=[download_gs],
     )
 
     model_output.clear(
-        lambda: tuple([gr.Button(interactive=False), gr.Button(interactive=False)]),
+        lambda: (gr.update(interactive=False), gr.update(interactive=False)),
         outputs=[download_glb, download_gs],
     )
     
 
 # Launch the Gradio app
 if __name__ == "__main__":
-    pipeline = TrellisVGGTTo3DPipeline.from_pretrained("esther11/trellis-vggt-v0-2")
+    pipeline = TrellisVGGTTo3DPipeline.from_pretrained("Stable-X/trellis-vggt-v0-2")
     pipeline.cuda()
     pipeline.VGGT_model.cuda()
     pipeline.birefnet_model.cuda()

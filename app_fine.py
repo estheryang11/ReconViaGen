@@ -3,6 +3,7 @@ from gradio_litmodel3d import LitModel3D
 
 import os
 import shutil
+import uuid
 os.environ['SPCONV_ALGO'] = 'native'
 from typing import *
 import torch
@@ -597,30 +598,32 @@ def generate_and_extract_glb(
         except Exception as e:
             print(f"Error during refinement: {e}")
     # Render video
-    # import uuid
-    # output_id = str(uuid.uuid4())
-    # os.makedirs(f"{TMP_DIR}/{output_id}", exist_ok=True)
-    # video_path = f"{TMP_DIR}/{output_id}/preview.mp4"
-    # glb_path = f"{TMP_DIR}/{output_id}/mesh.glb"
-    video = render_utils.render_video(outputs['gaussian'][0], num_frames=120)['color']
+    video_color = render_utils.render_video(outputs['gaussian'][0], num_frames=120)['color']
     video_geo = render_utils.render_video(outputs['mesh'][0], num_frames=120)['normal']
-    video = [np.concatenate([video[i], video_geo[i]], axis=1) for i in range(len(video))]
-    video_path = os.path.join(user_dir, 'sample.mp4')
+    video = [np.concatenate([video_color[i], video_geo[i]], axis=1) for i in range(len(video_color))]
+    del video_color, video_geo
+    output_id = str(uuid.uuid4())
+    video_path = os.path.join(user_dir, f'{output_id}.mp4')
     imageio.mimsave(video_path, video, fps=15)
-    
+    del video
+
     # Extract GLB
     gs = outputs['gaussian'][0]
     mesh = outputs['mesh'][0]
+    torch.cuda.empty_cache()
     glb = postprocessing_utils.to_glb(gs, mesh, simplify=mesh_simplify, texture_size=texture_size, verbose=False)
-    glb_path = os.path.join(user_dir, 'sample.glb')
+    glb_path = os.path.join(user_dir, f'{output_id}.glb')
     glb.export(glb_path)
-    
+    del glb
+
     # Pack state for optional Gaussian extraction
     state = pack_state(gs, mesh)
-    
+    del outputs
+
     torch.cuda.empty_cache()
     return state, video_path, glb_path, glb_path
 
+@torch.inference_mode()
 def extract_gaussian(state: dict, req: gr.Request) -> Tuple[str, str]:
     """
     Extract a Gaussian splatting file from the generated 3D model.
@@ -638,7 +641,7 @@ def extract_gaussian(state: dict, req: gr.Request) -> Tuple[str, str]:
     """
     user_dir = os.path.join(TMP_DIR, str(req.session_hash))
     gs, _ = unpack_state(state)
-    gaussian_path = os.path.join(user_dir, 'sample.ply')
+    gaussian_path = os.path.join(user_dir, f'{uuid.uuid4()}.ply')
     gs.save_ply(gaussian_path)
     torch.cuda.empty_cache()
     return gaussian_path, gaussian_path
@@ -709,10 +712,10 @@ with demo:
         <img src="https://www.obukhov.ai/img/badges/badge-pdf.svg">
     </a>
     </p>
-    
+
     ✨This demo is partial. We will release the whole model later. Stay tuned!✨
     """)
-    
+
     with gr.Row():
         with gr.Column():
             with gr.Tabs() as input_tabs:
@@ -721,9 +724,9 @@ with demo:
                     image_prompt = gr.Image(label="Image Prompt", format="png", visible=False, image_mode="RGBA", type="pil", height=300)
                     multiimage_prompt = gr.Gallery(label="Image Prompt", format="png", type="pil", height=300, columns=3)
                     gr.Markdown("""
-                        Input different views of the object in separate images. 
+                        Input different views of the object in separate images.
                     """)
-        
+
             with gr.Accordion(label="Generation Settings", open=False):
                 seed = gr.Slider(0, MAX_SEED, label="Seed", value=0, step=1)
                 randomize_seed = gr.Checkbox(label="Randomize Seed", value=False)
@@ -757,11 +760,11 @@ with demo:
         with gr.Column():
             video_output = gr.Video(label="Generated 3D Asset", autoplay=True, loop=True, height=300)
             model_output = LitModel3D(label="Extracted GLB/Gaussian", exposure=10.0, height=300)
-            
+
             with gr.Row():
                 download_glb = gr.DownloadButton(label="Download GLB", interactive=False)
-                download_gs = gr.DownloadButton(label="Download Gaussian", interactive=False)  
-    
+                download_gs = gr.DownloadButton(label="Download Gaussian", interactive=False)
+
     output_buf = gr.State()
 
     # Example images at the bottom of the page
@@ -807,26 +810,26 @@ with demo:
                 trellis_stage2_start_t],
         outputs=[output_buf, video_output, model_output, download_glb],
     ).then(
-        lambda: tuple([gr.Button(interactive=True), gr.Button(interactive=True)]),
+        lambda: (gr.update(interactive=True), gr.update(interactive=True)),
         outputs=[extract_gs_btn, download_glb],
     )
 
     video_output.clear(
-        lambda: tuple([gr.Button(interactive=False), gr.Button(interactive=False), gr.Button(interactive=False)]),
+        lambda: (gr.update(interactive=False), gr.update(interactive=False), gr.update(interactive=False)),
         outputs=[extract_gs_btn, download_glb, download_gs],
     )
-    
+
     extract_gs_btn.click(
         extract_gaussian,
         inputs=[output_buf],
         outputs=[model_output, download_gs],
     ).then(
-        lambda: gr.Button(interactive=True),
+        lambda: gr.update(interactive=True),
         outputs=[download_gs],
     )
 
     model_output.clear(
-        lambda: tuple([gr.Button(interactive=False), gr.Button(interactive=False)]),
+        lambda: (gr.update(interactive=False), gr.update(interactive=False)),
         outputs=[download_glb, download_gs],
     )
     
